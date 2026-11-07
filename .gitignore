@@ -1,0 +1,4 @@
+.DS_Store
+__pycache__/
+*.py[cod]
+ADDON_STORE_SUBMISSION_DRAFT.md

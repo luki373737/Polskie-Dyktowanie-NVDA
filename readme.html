@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head><meta charset="utf-8"><title>Polskie Dyktowanie dla NVDA</title></head>
+<body>
+<h1>Polskie Dyktowanie dla NVDA 2.9.3</h1>
+<p>Autor Polskiego Dyktanda: Madridista/Realista. Informacja o autorze znajduje się również w ustawieniach dodatku na karcie „Ogólne”.</p>
+<p>Alt+Q w polu edycji uruchamia wybrany tryb; poza polem otwiera ustawienia.
+W trybach dyktowania, czatu i tłumaczenia naciśnij ponownie Alt+Q, aby zakończyć
+nagrywanie. Drugi skrót uruchamia analizę wybraną w zakładce „Obraz”.
+Alt+Shift+Q uruchamia tryb wybrany w zakładce „Obraz”. Skróty Ctrl+Alt+Shift+F1–F6
+bezpośrednio uruchamiają kolejno opis obrazu z pliku, obrazu pod fokusem NVDA,
+całego ekranu, kolorów, wideo z pliku i wideo z ekranu. Skróty są zmienialne
+w zakładce „Skróty”; dla opisu pliku dodatek otworzy wybór załącznika, jeśli
+nie ma zapamiętanego pliku tego rodzaju.</p>
+<h2>Tryby</h2>
+<ul>
+<li>Dyktowanie z korektą, interpunkcją, nazwami, akapitami, emoji w serdecznych lub emocjonalnych wypowiedziach i słownikiem.</li>
+<li>Inteligentny czat z historią sześciu ostatnich wymian.</li>
+<li>Tłumaczenie nagranej wypowiedzi na wybrany język.</li>
+<li>Synteza mowy zaznaczonego tekstu przez silnik wybrany na karcie „Ogólne”: Gemini, Grok/xAI lub OpenAI API.</li>
+<li>Opis obrazu z pliku lub fokusu NVDA, całego ekranu i kolorów oraz wideo z załącznika lub ekranu.</li>
+<li>Po opisie otwiera się okno „Zapisz jako”. Opis można zapisać jako czytelny plik TXT w UTF-8 z polskimi znakami; nie jest automatycznie kopiowany do schowka.</li>
+<li>Gemini, Grok/xAI i OpenAI API, test połączenia API, pobieranie modeli, odczyt i kopiowanie
+ostatniego wyniku oraz opcjonalne Windows Voice Typing.</li>
+<li>OpenAI API obsługuje transkrypcję dyktowania oraz analizę obrazu, ekranu i wideo.</li>
+<li>Modele tekstowe i wizualne wybiera się osobno. Model i przycisk pobierania na karcie „Obraz” zmieniają się wraz z aktywnym dostawcą. Transkrypcja audio OpenAI korzysta z gpt-transcribe.</li>
+<li>Sygnały dźwiękowe dla ustawień oraz początku i końca nagrywania.</li>
+</ul>
+<h2>Tekst i języki</h2>
+<p>Ustawienia postępowania z wulgaryzmami, ochrony przed mową z tła i separatora wstawianego przed nowym tekstem są opisane nazwanymi grupami wyboru. Słownik zamian jest opcjonalny: wpisz jedną regułę na wiersz w formacie błędna forma =&gt; poprawna forma, aby poprawiać rozpoznane nazwy własne i terminy. Puste pole wyłącza słownik.</p>
+<h2>Obraz</h2>
+<p>Wybierz rodzaj analizy, a zdjęcie lub wideo dodaj przyciskiem „Przeglądaj” przy polu „Załącz zdjęcie lub wideo”. Typ pliku ustawia odpowiedni tryb. Obrazy PNG, JPG i WebP mogą mieć do 10 MB. Film jest wysyłany jako równomiernie wybrane klatki bez dźwięku i wymaga FFmpeg oraz FFprobe dostępnych w PATH. Obraz z fokusu używa grafiki wskazanej przez NVDA; opis ekranu analizuje pulpit.</p>
+<p>Pliki FFmpeg dla Windows są dostępne na <a href="https://www.ffmpeg.org/download.html">stronie pobierania FFmpeg</a>.</p>
+<h2>Synteza mowy</h2>
+<p>Synteza mowy ma osobną kartę, ale automatycznie korzysta z dostawcy i klucza API wybranego na karcie „Ogólne”. Zmiana dostawcy przełącza także ustawienia TTS. Listę modeli Gemini lub OpenAI TTS można pobrać na tej karcie; xAI samo dobiera model TTS, a użytkownik wybiera głos. OpenAI API używa modelu gpt-4o-mini-tts (dłuższy tekst jest dzielony na fragmenty po maksymalnie 4096 znaków); OpenAI zapowiada jego wycofanie 6 stycznia 2027 r.</p>
+<h2>Konfiguracja i prywatność</h2>
+<p>Na karcie „Ogólne” wybierz dostawcę Gemini / Google, Grok / xAI albo OpenAI API.
+Pole klucza API poniżej dotyczy aktualnie wybranego dostawcy; klucze są
+przechowywane osobno. Dostawca z tej karty służy do tekstu, obrazu i wideo.
+Syntezę mowy konfiguruje się osobno na karcie „Synteza mowy”, gdzie dostępność
+Gemini, Grok/xAI lub OpenAI API zależy od wybranego dostawcy i przypisanego mu klucza. Ustawienia modeli znajdują się na kartach poszczególnych
+dostawców. Użyj przycisku pobierania modeli, a następnie wybierz model z listy.
+Model tekstowy wybiera się na karcie aktywnego dostawcy. Model wizualny i przycisk
+pobierania na karcie „Obraz” zmieniają się wraz z aktywnym dostawcą.
+Transkrypcja audio OpenAI używa gpt-transcribe.
+Zapisany klucz jest pokazany jako zamaskowany; wpisanie nowej wartości na karcie
+„Ogólne” go zmieni.
+Klucz jest
+chroniony Windows DPAPI. Nagranie jest przetwarzane w pamięci i wysyłane przez
+HTTPS do dostawcy. Załączniki obrazów i wybrane klatki filmu są wysyłane do
+dostawcy. Opis ekranu i kolorów wysyła cały pulpit, a wideo z ekranu kolejne zrzuty.
+Wynik TTS jest tymczasowo zapisywany w pliku
+systemowym tylko na czas odtwarzania. Klucz OpenAI API i użycie API są rozliczane
+oddzielnie od subskrypcji ChatGPT. TTS używa klucza aktywnego dostawcy.</p>
+<p>Skróty można zmienić w zakładce „Skróty” lub w NVDA &gt; Ustawienia &gt; Zdarzenia wejściowe.
+Enter po wklejeniu może wysłać formularz. Minimalna wymagana wersja NVDA to
+2024.1. Użytkownik potwierdził sprawdzenie paczki 2.9.3 w NVDA 2026.1.</p>
+<p>Oparte na Polskim Dyktandzie 1.3.15 autorstwa Madridista/Realista. Licencja dodatku i jego kodu: GNU GPL w wersji 2 lub nowszej; pełny tekst znajduje się w pliku COPYING.txt.</p>
+</body></html>
+
+
+
