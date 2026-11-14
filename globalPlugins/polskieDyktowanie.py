@@ -13,6 +13,7 @@ elsewhere. Alt+Shift+Q runs the selected image, color or video analysis.
 import base64
 import binascii
 import ctypes
+import io
 import json
 import os
 import shutil
@@ -27,6 +28,7 @@ import urllib.request
 import wave
 import webbrowser
 import zlib
+from pathlib import Path
 from ctypes import wintypes
 import winsound
 
@@ -87,8 +89,6 @@ _DEFAULTS = {
     "background_voice_protection": "standard",
     "vision_detail": "detailed",
     "video_seconds": 8,
-    "ffmpeg_path": "",
-    "media_attachment_path": "",
     "tts_provider": "gemini",
     "gemini_tts_model": "gemini-3.1-flash-tts-preview",
     "gemini_tts_voice": "Kore",
@@ -97,6 +97,10 @@ _DEFAULTS = {
     "openai_tts_voice": "marin",
     "shortcut_main": "kb:alt+q",
     "shortcut_global": "kb:alt+shift+q",
+    "shortcut_speech_to_text": "kb:control+alt+shift+f7",
+    "shortcut_text_to_speech": "kb:control+alt+shift+f8",
+    "shortcut_file_transcription": "kb:control+alt+shift+f9",
+    "shortcut_file_synthesis": "kb:control+alt+shift+f10",
     "shortcut_visual_photo_file": "kb:control+alt+shift+f1",
     "shortcut_visual_photo": "kb:control+alt+shift+f2",
     "shortcut_visual_screen": "kb:control+alt+shift+f3",
@@ -699,6 +703,12 @@ def _read_attached_image(path):
 
 def _find_ffmpeg_tools(configured_path=""):
     configured_path = str(configured_path or "").strip().strip('"')
+    addon_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    bundled_dir = os.path.join(addon_root, "bin", "ffmpeg")
+    bundled_ffmpeg = os.path.join(bundled_dir, "ffmpeg.exe")
+    bundled_ffprobe = os.path.join(bundled_dir, "ffprobe.exe")
+    if os.path.isfile(bundled_ffmpeg) and os.path.isfile(bundled_ffprobe):
+        return bundled_ffmpeg, bundled_ffprobe
     if configured_path and os.path.isfile(configured_path):
         configured_probe = os.path.join(os.path.dirname(configured_path), "ffprobe.exe")
         if os.path.isfile(configured_probe):
@@ -720,7 +730,7 @@ def _find_ffmpeg_tools(configured_path=""):
         candidate_ffprobe = os.path.join(directory, "ffprobe.exe")
         if os.path.isfile(candidate_ffmpeg) and os.path.isfile(candidate_ffprobe):
             return candidate_ffmpeg, candidate_ffprobe
-    raise RuntimeError("Do opisu wideo zainstaluj FFmpeg i FFprobe oraz dodaj ich folder do PATH systemu Windows.")
+    raise RuntimeError("Nie znaleziono dołączonych programów do odczytu wideo ani FFmpeg i FFprobe w PATH.")
 
 
 def _extract_video_frames(path, max_frames, ffmpeg_path=""):
@@ -757,6 +767,31 @@ def _extract_video_frames(path, max_frames, ffmpeg_path=""):
         if not frames:
             raise RuntimeError("FFmpeg nie znalazł klatek w wybranym pliku wideo.")
         return frames
+
+
+def _extract_audio_segments(path, output_directory, segment_seconds=300):
+    ffmpeg, _ffprobe = _find_ffmpeg_tools()
+    pattern = os.path.join(output_directory, "audio_%03d.wav")
+    try:
+        subprocess.run(
+            [ffmpeg, "-nostdin", "-hide_banner", "-loglevel", "error", "-y", "-i", path,
+             "-map", "0:a:0", "-vn", "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le",
+             "-f", "segment", "-segment_time", str(int(segment_seconds)), "-reset_timestamps", "1", pattern],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=900, check=True,
+        )
+    except subprocess.CalledProcessError as e:
+        detail = e.stderr.decode("utf-8", "replace")[-400:].strip() if e.stderr else ""
+        raise RuntimeError("Nie udało się odczytać ścieżki dźwiękowej. Sprawdź, czy plik zawiera mowę. {}".format(detail))
+    except subprocess.TimeoutExpired:
+        raise RuntimeError("Przygotowanie nagrania do transkrypcji trwało zbyt długo.")
+    segments = sorted(
+        os.path.join(output_directory, name)
+        for name in os.listdir(output_directory)
+        if name.startswith("audio_") and name.lower().endswith(".wav")
+    )
+    if not segments:
+        raise RuntimeError("Nie znaleziono dźwięku w wybranym pliku.")
+    return segments
 
 
 def _gemini_tts(api_key, model, voice, text):
@@ -986,6 +1021,32 @@ class _SettingsDialog(wx.Dialog):
     MODE_IDS = ["dictation", "chat", "translate", "tts"]
     VISUAL_MODES = ["Opis obrazu z pliku", "Opis obrazu z fokusu NVDA", "Opis całego ekranu", "Rozpoznawanie kolorów na ekranie", "Opis wideo z pliku", "Opis wideo z ekranu"]
     VISUAL_MODE_IDS = ["photo_file", "photo", "screen", "colors", "video_file", "video"]
+    GEMINI_TTS_VOICES = [
+        ("Zephyr — jasny", "Zephyr"), ("Puck — żywy", "Puck"), ("Charon — informacyjny", "Charon"),
+        ("Kore — stanowczy", "Kore"), ("Fenrir — pełen energii", "Fenrir"), ("Leda — młodzieńczy", "Leda"),
+        ("Orus — stanowczy", "Orus"), ("Aoede — swobodny", "Aoede"), ("Callirrhoe — spokojny", "Callirrhoe"),
+        ("Autonoe — jasny", "Autonoe"), ("Enceladus — oddechowy", "Enceladus"), ("Iapetus — wyraźny", "Iapetus"),
+        ("Umbriel — swobodny", "Umbriel"), ("Algieba — gładki", "Algieba"), ("Despina — gładki", "Despina"),
+        ("Erinome — wyraźny", "Erinome"), ("Algenib — chropowaty", "Algenib"), ("Rasalgethi — informacyjny", "Rasalgethi"),
+        ("Laomedeia — żywy", "Laomedeia"), ("Achernar — łagodny", "Achernar"), ("Alnilam — stanowczy", "Alnilam"),
+        ("Schedar — stonowany", "Schedar"), ("Gacrux — dojrzały", "Gacrux"), ("Pulcherrima — zdecydowany", "Pulcherrima"),
+        ("Achird — przyjazny", "Achird"), ("Zubenelgenubi — swobodny", "Zubenelgenubi"),
+        ("Vindemiatrix — łagodny", "Vindemiatrix"), ("Sadachbia — żywy", "Sadachbia"),
+        ("Sadaltager — kompetentny", "Sadaltager"), ("Sulafat — ciepły", "Sulafat"),
+    ]
+    XAI_TTS_VOICES = [
+        ("Ara — ciepły i przyjazny", "ara"), ("Eve — energiczny i żywy", "eve"),
+        ("Leo — autorytatywny i mocny", "leo"), ("Rex — pewny i wyraźny", "rex"),
+        ("Sal — gładki i zrównoważony", "sal"), ("Rigel — precyzyjny i profesjonalny", "rigel"),
+        ("Cosmo — jasny i ciekawy", "cosmo"), ("Celeste — spokojny i wspierający", "celeste"),
+        ("Ursa — przyjazny i ciepły", "ursa"), ("Sirius — dowcipny i figlarny", "sirius"),
+        ("Lumen — ciepły i wyrazisty", "lumen"), ("Castor — swobodny i naturalny", "castor"),
+        ("Naksh — spokojny i refleksyjny", "naksh"), ("Atlas — pewny i stanowczy", "atlas"),
+        ("Aurora — spokojny i łagodny", "aurora"), ("Liora — ciepły i kojący", "liora"),
+    ]
+    OPENAI_TTS_VOICES = [(voice, voice) for voice in (
+        "alloy", "ash", "ballad", "coral", "echo", "fable", "marin", "cedar", "nova", "onyx", "sage", "shimmer", "verse"
+    )]
     SHORTCUTS = [
         ("Alt+Q", "kb:alt+q"),
         ("Alt+Shift+Q", "kb:alt+shift+q"),
@@ -1000,6 +1061,10 @@ class _SettingsDialog(wx.Dialog):
         ("Ctrl+Alt+Shift+F4", "kb:control+alt+shift+f4"),
         ("Ctrl+Alt+Shift+F5", "kb:control+alt+shift+f5"),
         ("Ctrl+Alt+Shift+F6", "kb:control+alt+shift+f6"),
+        ("Ctrl+Alt+Shift+F7", "kb:control+alt+shift+f7"),
+        ("Ctrl+Alt+Shift+F8", "kb:control+alt+shift+f8"),
+        ("Ctrl+Alt+Shift+F9", "kb:control+alt+shift+f9"),
+        ("Ctrl+Alt+Shift+F10", "kb:control+alt+shift+f10"),
     ]
     VISUAL_SHORTCUT_FIELDS = {
         "photo_file": "shortcut_visual_photo_file",
@@ -1016,7 +1081,7 @@ class _SettingsDialog(wx.Dialog):
         ("中文", "zh"),
     ]
 
-    def __init__(self, parent, settings, save_callback, test_callback, fetch_callback, run_callback, copy_callback, read_callback, clear_callback):
+    def __init__(self, parent, settings, save_callback, test_callback, fetch_callback, run_callback, copy_callback, read_callback, clear_callback, file_action_callback):
         super().__init__(
             parent,
             title="Polskie Dyktowanie — ustawienia",
@@ -1032,6 +1097,7 @@ class _SettingsDialog(wx.Dialog):
         self._copy_callback = copy_callback
         self._read_callback = read_callback
         self._clear_callback = clear_callback
+        self._file_action_callback = file_action_callback
 
         panel = wx.Panel(self)
         outer = wx.BoxSizer(wx.VERTICAL)
@@ -1138,8 +1204,14 @@ class _SettingsDialog(wx.Dialog):
         openai_note.Wrap(650)
         content.Add(openai_note, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.TOP, 8)
 
-        new_page("Tekst i języki")
-        section("Języki i przetwarzanie")
+        new_page("Mowa na tekst")
+        section("Transkrypcja mowy na tekst")
+        stt_file_note = wx.StaticText(scroll, label="Możesz dyktować skrótem F7 albo wskazać nagranie audio/wideo. Transkrypcja zostanie zapisana jako plik TXT.")
+        stt_file_note.Wrap(650)
+        content.Add(stt_file_note, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.TOP, 8)
+        self.transcribe_file_button = wx.Button(scroll, label="Wybierz nagranie i zapisz transkrypcję…")
+        self.transcribe_file_button.Bind(wx.EVT_BUTTON, lambda _event: self._on_file_action("transcribe"))
+        content.Add(self.transcribe_file_button, 0, wx.LEFT | wx.RIGHT | wx.TOP, 8)
         self.language = wx.Choice(scroll, choices=[item[0] for item in self.LANGUAGES])
         self.language.SetSelection(max(0, next((i for i, item in enumerate(self.LANGUAGES) if item[1] == settings.get("language", "pl")), 0)))
         row("Język mowy:", self.language)
@@ -1225,21 +1297,7 @@ class _SettingsDialog(wx.Dialog):
         visual_mode_note = wx.StaticText(scroll, label="Pliki nie wymagają fokusu. Opis ekranu i kolorów analizuje pulpit.")
         visual_mode_note.Wrap(650)
         content.Add(visual_mode_note, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.TOP, 8)
-        media_wildcard = (
-            "Obrazy i wideo|*.png;*.jpg;*.jpeg;*.webp;*.mp4;*.mov;*.mkv;*.avi;*.webm;*.m4v;*.wmv|"
-            "Obrazy (PNG, JPG, WebP)|*.png;*.jpg;*.jpeg;*.webp|"
-            "Wideo (MP4, MOV, MKV, AVI, WebM, M4V, WMV)|*.mp4;*.mov;*.mkv;*.avi;*.webm;*.m4v;*.wmv"
-        )
-        self.media_attachment = wx.FilePickerCtrl(
-            scroll,
-            message="Wybierz zdjęcie lub wideo",
-            wildcard=media_wildcard,
-            path=str(settings.get("media_attachment_path", "") or ""),
-            style=wx.FLP_OPEN | wx.FLP_FILE_MUST_EXIST,
-        )
-        row("Załącz zdjęcie lub wideo:", self.media_attachment)
-        self.media_attachment.Bind(wx.EVT_FILEPICKER_CHANGED, self._on_media_attachment_changed)
-        attachment_note = wx.StaticText(scroll, label="Po wyborze kliknij OK, potem Alt+Shift+Q. Możesz też użyć przycisku „Uruchom tryb”.")
+        attachment_note = wx.StaticText(scroll, label="Skrót opisu pliku zawsze otwiera wybór nowego obrazu lub filmu.")
         content.Add(attachment_note, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.TOP, 6)
         self.detail = wx.Choice(scroll, choices=["Krótki opis", "Szczegółowy opis"])
         self.detail.SetSelection(0 if settings.get("vision_detail") == "short" else 1)
@@ -1251,10 +1309,17 @@ class _SettingsDialog(wx.Dialog):
         video_duration_note = wx.StaticText(scroll, label="Dla ekranu: sekundy. Dla pliku: liczba klatek z całego filmu.")
         video_duration_note.Wrap(650)
         content.Add(video_duration_note, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.TOP, 8)
-        ffmpeg_note = wx.StaticText(scroll, label="Analiza filmu wymaga FFmpeg i FFprobe w systemowym PATH.")
+        ffmpeg_note = wx.StaticText(scroll, label="Obsługa plików wideo jest dołączona do dodatku. Nie musisz instalować ani wskazywać osobnych programów.")
+        ffmpeg_note.Wrap(650)
         content.Add(ffmpeg_note, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.TOP, 6)
-        new_page("Synteza mowy")
+        new_page("Tekst na mowę")
         section("Ustawienia syntezy mowy")
+        tts_file_note = wx.StaticText(scroll, label="Możesz odczytać zaznaczony tekst skrótem F8 albo wczytać plik TXT. Z niego powstanie plik audio WAV.")
+        tts_file_note.Wrap(650)
+        content.Add(tts_file_note, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.TOP, 8)
+        self.speak_file_button = wx.Button(scroll, label="Wybierz plik tekstowy i zapisz mowę jako WAV…")
+        self.speak_file_button.Bind(wx.EVT_BUTTON, lambda _event: self._on_file_action("synthesize_file"))
+        content.Add(self.speak_file_button, 0, wx.LEFT | wx.RIGHT | wx.TOP, 8)
         self.tts_provider_page = scroll
         self.tts_provider_note = wx.StaticText(scroll, label="Synteza używa silnika wybranego na karcie „Ogólne”.")
         self.tts_provider_note.Wrap(650)
@@ -1271,7 +1336,10 @@ class _SettingsDialog(wx.Dialog):
         self.fetch_tts_models.Bind(wx.EVT_BUTTON, lambda _event: self._on_fetch("gemini_tts"))
         gemini_tts_sizer.Add(self.fetch_tts_models, 0, wx.TOP, 7)
         gemini_tts_sizer.Add(wx.StaticText(self.gemini_tts_panel, label="Głos:"), 0, wx.TOP, 8)
-        self.gemini_tts_voice = wx.TextCtrl(self.gemini_tts_panel, value=str(settings.get("gemini_tts_voice", "Kore")))
+        gemini_voice_ids = [voice_id for _label, voice_id in self.GEMINI_TTS_VOICES]
+        self.gemini_tts_voice = wx.Choice(self.gemini_tts_panel, choices=[label for label, _voice_id in self.GEMINI_TTS_VOICES])
+        selected_gemini_voice = str(settings.get("gemini_tts_voice", "Kore") or "Kore")
+        self.gemini_tts_voice.SetSelection(gemini_voice_ids.index(selected_gemini_voice) if selected_gemini_voice in gemini_voice_ids else gemini_voice_ids.index("Kore"))
         self.gemini_tts_voice.SetName("Głos Gemini TTS")
         gemini_tts_sizer.Add(self.gemini_tts_voice, 0, wx.EXPAND | wx.TOP, 3)
         self.gemini_tts_panel.SetSizer(gemini_tts_sizer)
@@ -1279,11 +1347,14 @@ class _SettingsDialog(wx.Dialog):
 
         self.grok_tts_panel = wx.Panel(scroll)
         grok_tts_sizer = wx.StaticBoxSizer(wx.VERTICAL, self.grok_tts_panel, "Grok / xAI")
-        grok_tts_note = wx.StaticText(self.grok_tts_panel, label="Usługa xAI TTS sama dobiera model; można ustawić głos.")
+        grok_tts_note = wx.StaticText(self.grok_tts_panel, label="Usługa xAI TTS sama dobiera model. Głos wybierz z listy.")
         grok_tts_note.Wrap(620)
         grok_tts_sizer.Add(grok_tts_note, 0, wx.EXPAND | wx.TOP, 6)
         grok_tts_sizer.Add(wx.StaticText(self.grok_tts_panel, label="Głos:"), 0, wx.TOP, 6)
-        self.xai_tts_voice = wx.TextCtrl(self.grok_tts_panel, value=str(settings.get("xai_tts_voice", "eve")))
+        xai_voice_ids = [voice_id for _label, voice_id in self.XAI_TTS_VOICES]
+        self.xai_tts_voice = wx.Choice(self.grok_tts_panel, choices=[label for label, _voice_id in self.XAI_TTS_VOICES])
+        selected_xai_voice = str(settings.get("xai_tts_voice", "eve") or "eve").lower()
+        self.xai_tts_voice.SetSelection(xai_voice_ids.index(selected_xai_voice) if selected_xai_voice in xai_voice_ids else xai_voice_ids.index("eve"))
         self.xai_tts_voice.SetName("Głos Grok / xAI")
         grok_tts_sizer.Add(self.xai_tts_voice, 0, wx.EXPAND | wx.TOP, 3)
         self.grok_tts_panel.SetSizer(grok_tts_sizer)
@@ -1300,8 +1371,8 @@ class _SettingsDialog(wx.Dialog):
         self.fetch_openai_tts_models.Bind(wx.EVT_BUTTON, lambda _event: self._on_fetch("openai_tts"))
         openai_tts_sizer.Add(self.fetch_openai_tts_models, 0, wx.TOP, 7)
         openai_tts_sizer.Add(wx.StaticText(self.openai_tts_panel, label="Głos:"), 0, wx.TOP, 8)
-        openai_tts_voices = ["alloy", "ash", "ballad", "coral", "echo", "fable", "marin", "cedar", "nova", "onyx", "sage", "shimmer", "verse"]
-        self.openai_tts_voice = wx.Choice(self.openai_tts_panel, choices=openai_tts_voices)
+        openai_tts_voices = [voice_id for _label, voice_id in self.OPENAI_TTS_VOICES]
+        self.openai_tts_voice = wx.Choice(self.openai_tts_panel, choices=[label for label, _voice_id in self.OPENAI_TTS_VOICES])
         selected_openai_voice = str(settings.get("openai_tts_voice", "marin") or "marin")
         self.openai_tts_voice.SetSelection(openai_tts_voices.index(selected_openai_voice) if selected_openai_voice in openai_tts_voices else 0)
         self.openai_tts_voice.SetName("Głos OpenAI TTS")
@@ -1322,7 +1393,25 @@ class _SettingsDialog(wx.Dialog):
         self.shortcut_global = wx.Choice(scroll, choices=global_shortcut_choices)
         self.shortcut_global.SetSelection(self._shortcut_index(settings.get("shortcut_global", "kb:alt+shift+q")))
         content.Add(self.shortcut_global, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.TOP, 8)
-        shortcut_note = wx.StaticText(scroll, label="Skrót 1 w polu edycji rozpoczyna lub kończy dyktowanie, czat albo tłumaczenie, a poza polem otwiera ustawienia. Skrót 2 uruchamia wybrany tryb opisu. Poniższe skróty uruchamiają wskazany rodzaj opisu bezpośrednio. Podczas nagrywania użyj skrótu 1, aby zakończyć.")
+        stt_shortcut_choices = ["Skrót mowa na tekst — dyktowanie: {}".format(label) for label, _identifier in self.SHORTCUTS]
+        self.shortcut_speech_to_text = wx.Choice(scroll, choices=stt_shortcut_choices)
+        self.shortcut_speech_to_text.SetSelection(self._shortcut_index(settings.get("shortcut_speech_to_text", _DEFAULTS["shortcut_speech_to_text"])))
+        content.Add(self.shortcut_speech_to_text, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.TOP, 8)
+        tts_shortcut_choices = ["Skrót tekst na mowę — synteza: {}".format(label) for label, _identifier in self.SHORTCUTS]
+        self.shortcut_text_to_speech = wx.Choice(scroll, choices=tts_shortcut_choices)
+        self.shortcut_text_to_speech.SetSelection(self._shortcut_index(settings.get("shortcut_text_to_speech", _DEFAULTS["shortcut_text_to_speech"])))
+        content.Add(self.shortcut_text_to_speech, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.TOP, 8)
+        file_stt_choices = ["Wybierz plik audio/wideo i zapisz transkrypcję: {}".format(label) for label, _identifier in self.SHORTCUTS]
+        self.shortcut_file_transcription = wx.Choice(scroll, choices=file_stt_choices)
+        self.shortcut_file_transcription.SetSelection(self._shortcut_index(settings.get("shortcut_file_transcription", _DEFAULTS["shortcut_file_transcription"])))
+        self.shortcut_file_transcription.SetName("Skrót transkrypcji pliku audio lub wideo")
+        content.Add(self.shortcut_file_transcription, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.TOP, 8)
+        file_tts_choices = ["Wybierz plik TXT i zapisz mowę jako WAV: {}".format(label) for label, _identifier in self.SHORTCUTS]
+        self.shortcut_file_synthesis = wx.Choice(scroll, choices=file_tts_choices)
+        self.shortcut_file_synthesis.SetSelection(self._shortcut_index(settings.get("shortcut_file_synthesis", _DEFAULTS["shortcut_file_synthesis"])))
+        self.shortcut_file_synthesis.SetName("Skrót syntezy mowy z pliku tekstowego")
+        content.Add(self.shortcut_file_synthesis, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.TOP, 8)
+        shortcut_note = wx.StaticText(scroll, label="Skrót 1 zachowuje dotychczasowe działanie. Skróty dyktowania i syntezy zaznaczonego tekstu działają bezpośrednio. Dwa nowe skróty otwierają wybór pliku: audio/wideo do transkrypcji albo TXT do syntezy WAV. Skrót 2 uruchamia wybrany tryb opisu. Pozostałe skróty uruchamiają wskazany rodzaj opisu. Podczas nagrywania użyj skrótu dyktowania lub skrótu 1, aby zakończyć.")
         shortcut_note.Wrap(650)
         content.Add(shortcut_note, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.TOP, 12)
         self.visual_shortcuts = {}
@@ -1397,30 +1486,22 @@ class _SettingsDialog(wx.Dialog):
         settings["dictionary"] = self.dictionary.GetValue()
         settings["vision_detail"] = "short" if self.detail.GetSelection() == 0 else "detailed"
         settings["video_seconds"] = int(self.video_seconds.GetStringSelection() or "8")
-        settings["media_attachment_path"] = self.media_attachment.GetPath().strip()
         settings["tts_provider"] = active_provider
         settings["gemini_tts_model"] = self.gemini_tts_model.GetStringSelection().strip() or "gemini-3.1-flash-tts-preview"
-        settings["gemini_tts_voice"] = self.gemini_tts_voice.GetValue().strip() or "Kore"
-        settings["xai_tts_voice"] = self.xai_tts_voice.GetValue().strip() or "eve"
+        settings["gemini_tts_voice"] = self.GEMINI_TTS_VOICES[max(0, self.gemini_tts_voice.GetSelection())][1]
+        settings["xai_tts_voice"] = self.XAI_TTS_VOICES[max(0, self.xai_tts_voice.GetSelection())][1]
         settings["openai_tts_model"] = self.openai_tts_model.GetStringSelection().strip() or "gpt-4o-mini-tts"
-        settings["openai_tts_voice"] = self.openai_tts_voice.GetStringSelection().strip() or "marin"
+        settings["openai_tts_voice"] = self.OPENAI_TTS_VOICES[max(0, self.openai_tts_voice.GetSelection())][1]
         settings["shortcut_main"] = self.SHORTCUTS[max(0, self.shortcut_main.GetSelection())][1]
         settings["shortcut_global"] = self.SHORTCUTS[max(0, self.shortcut_global.GetSelection())][1]
+        settings["shortcut_speech_to_text"] = self.SHORTCUTS[max(0, self.shortcut_speech_to_text.GetSelection())][1]
+        settings["shortcut_text_to_speech"] = self.SHORTCUTS[max(0, self.shortcut_text_to_speech.GetSelection())][1]
+        settings["shortcut_file_transcription"] = self.SHORTCUTS[max(0, self.shortcut_file_transcription.GetSelection())][1]
+        settings["shortcut_file_synthesis"] = self.SHORTCUTS[max(0, self.shortcut_file_synthesis.GetSelection())][1]
         for mode_id, field in self.VISUAL_SHORTCUT_FIELDS.items():
             choice = self.visual_shortcuts[mode_id]
             settings[field] = self.SHORTCUTS[max(0, choice.GetSelection())][1]
         return settings
-
-    def _on_media_attachment_changed(self, event):
-        path = self.media_attachment.GetPath().strip()
-        extension = os.path.splitext(path)[1].lower()
-        if extension in (".png", ".jpg", ".jpeg", ".webp"):
-            self.visual_mode.SetSelection(self.VISUAL_MODE_IDS.index("photo_file"))
-            ui.message("Wybrano zdjęcie do opisu.")
-        elif extension in (".mp4", ".mov", ".mkv", ".avi", ".webm", ".m4v", ".wmv"):
-            self.visual_mode.SetSelection(self.VISUAL_MODE_IDS.index("video_file"))
-            ui.message("Wybrano wideo do opisu.")
-        event.Skip()
 
     def _update_tts_panels(self, provider):
         self.gemini_tts_panel.Show(provider == "gemini")
@@ -1570,7 +1651,7 @@ class _SettingsDialog(wx.Dialog):
 
     def _collect_validated(self):
         settings = self.collect()
-        shortcut_fields = ["shortcut_main", "shortcut_global"] + list(self.VISUAL_SHORTCUT_FIELDS.values())
+        shortcut_fields = ["shortcut_main", "shortcut_global", "shortcut_speech_to_text", "shortcut_text_to_speech", "shortcut_file_transcription", "shortcut_file_synthesis"] + list(self.VISUAL_SHORTCUT_FIELDS.values())
         shortcuts = [settings[field] for field in shortcut_fields]
         if len(shortcuts) != len(set(shortcuts)):
             wx.MessageBox("Każda akcja musi mieć inny skrót. Zmień powtarzające się przypisania.", "Polskie Dyktowanie", wx.OK | wx.ICON_WARNING, self)
@@ -1598,6 +1679,14 @@ class _SettingsDialog(wx.Dialog):
         self._save_callback(settings)
         self.EndModal(wx.ID_OK)
         wx.CallAfter(self._run_callback)
+
+    def _on_file_action(self, action):
+        settings = self._collect_validated()
+        if settings is None:
+            return
+        self._save_callback(settings)
+        self.EndModal(wx.ID_OK)
+        wx.CallAfter(self._file_action_callback, action, settings)
 
 
 class GlobalPlugin(globalPluginHandler.GlobalPlugin):
@@ -1682,7 +1771,7 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
         return settings
 
     def _save_settings(self, settings, announce=False):
-        shortcut_fields = ["shortcut_main", "shortcut_global"] + list(_SettingsDialog.VISUAL_SHORTCUT_FIELDS.values())
+        shortcut_fields = ["shortcut_main", "shortcut_global", "shortcut_speech_to_text", "shortcut_text_to_speech", "shortcut_file_transcription", "shortcut_file_synthesis"] + list(_SettingsDialog.VISUAL_SHORTCUT_FIELDS.values())
         old_shortcuts = tuple(self._settings.get(field) for field in shortcut_fields)
         merged = dict(self._settings)
         merged.update(settings)
@@ -1716,6 +1805,10 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
             bindings = [
                 (self._settings.get("shortcut_main", "kb:alt+q"), "dictationOrSettings"),
                 (self._settings.get("shortcut_global", "kb:alt+shift+q"), "runVisualMode"),
+                (self._settings.get("shortcut_speech_to_text", _DEFAULTS["shortcut_speech_to_text"]), "runSpeechToText"),
+                (self._settings.get("shortcut_text_to_speech", _DEFAULTS["shortcut_text_to_speech"]), "runTextToSpeech"),
+                (self._settings.get("shortcut_file_transcription", _DEFAULTS["shortcut_file_transcription"]), "runFileTranscription"),
+                (self._settings.get("shortcut_file_synthesis", _DEFAULTS["shortcut_file_synthesis"]), "runFileSynthesis"),
             ]
             bindings.extend(
                 (self._settings.get(field, _DEFAULTS[field]), "runVisual_{}".format(mode_id))
@@ -1758,7 +1851,7 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
             # NVDA requires popup lifecycle hooks around modal add-on dialogs.
             gui.mainFrame.prePopup()
             popup_started = True
-            dialog = _SettingsDialog(gui.mainFrame, self._settings, self._save_settings, self._test_api, self._fetch_models, self._run_selected_mode, self._copy_last_result, self._read_last_result, self._clear_log)
+            dialog = _SettingsDialog(gui.mainFrame, self._settings, self._save_settings, self._test_api, self._fetch_models, self._run_selected_mode, self._copy_last_result, self._read_last_result, self._clear_log, self._run_file_action)
             self._settings_dialog = dialog
             # Activate after ShowModal has displayed the native window.
             wx.CallAfter(self._bring_settings_to_front, dialog)
@@ -1809,8 +1902,10 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
             return settings.get("grok_vision_model", settings.get("grok_model", DEFAULT_GROK_VISION_MODEL))
         return settings.get("gemini_vision_model", settings.get("model", DEFAULT_GEMINI_VISION_MODEL))
 
-    def _start(self, focus):
+    def _start(self, focus, mode_override=None):
         settings = dict(self._settings)
+        if mode_override:
+            settings["mode"] = mode_override
         if settings.get("system_dictation") and settings.get("mode") == "dictation":
             try:
                 self._play_cue(720, 100)
@@ -2010,6 +2105,198 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
         finally:
             self._processing = False
 
+    def _run_file_action(self, action, settings):
+        if self._recording or self._processing:
+            ui.message("Dodatek jest jeszcze zajęty.")
+            return
+        if not self._api_key(settings):
+            ui.message("Najpierw ustaw klucz API wybranego dostawcy.")
+            wx.CallAfter(self._show_settings)
+            return
+        self._processing = True
+        wx.CallAfter(self._choose_file_for_action, action, settings)
+
+    def _choose_file_for_action(self, action, settings):
+        if action == "transcribe":
+            message = "Wybierz nagranie audio lub wideo do transkrypcji"
+            wildcard = (
+                "Nagrania audio i wideo|*.wav;*.mp3;*.m4a;*.aac;*.flac;*.ogg;*.opus;*.webm;*.wma;*.aiff;*.aif;*.mp4;*.mov;*.mkv;*.avi;*.m4v;*.wmv;*.mpeg;*.mpg;*.3gp|"
+                "Wszystkie pliki (*.*)|*.*"
+            )
+        else:
+            message = "Wybierz plik tekstowy do zamiany na mowę"
+            wildcard = "Pliki tekstowe (*.txt)|*.txt|Wszystkie pliki (*.*)|*.*"
+        dialog = None
+        popup_started = False
+        file_path = None
+        try:
+            gui.mainFrame.prePopup()
+            popup_started = True
+            dialog = wx.FileDialog(gui.mainFrame, message=message, wildcard=wildcard, style=wx.FD_OPEN | wx.FD_FILE_MUST_EXIST)
+            if dialog.ShowModal() == wx.ID_OK:
+                file_path = dialog.GetPath()
+        except Exception as e:
+            self._write_log("Wybór pliku tekstu lub mowy: {}".format(e))
+            ui.message("Nie udało się otworzyć okna wyboru pliku.")
+        finally:
+            if dialog:
+                dialog.Destroy()
+            if popup_started:
+                gui.mainFrame.postPopup()
+        if not file_path:
+            self._processing = False
+            return
+        if action == "transcribe":
+            ui.message("Przygotowuję nagranie do transkrypcji.")
+            threading.Thread(target=self._transcribe_file_worker, args=(file_path, settings), daemon=True, name="PolskieDyktowanieFileSTT").start()
+        else:
+            ui.message("Odczytuję plik tekstowy i przygotowuję mowę.")
+            threading.Thread(target=self._synthesize_file_worker, args=(file_path, settings), daemon=True, name="PolskieDyktowanieFileTTS").start()
+
+    def _transcribe_file_worker(self, file_path, settings):
+        try:
+            with tempfile.TemporaryDirectory(prefix="polskieDyktowanie_stt_") as directory:
+                segments = _extract_audio_segments(file_path, directory)
+                transcripts = []
+                for index, segment_path in enumerate(segments, 1):
+                    wx.CallAfter(ui.message, "Rozpoznaję część {} z {}.".format(index, len(segments)))
+                    with open(segment_path, "rb") as segment_file:
+                        transcripts.append(self._transcribe(segment_file.read(), settings))
+            transcript = "\n".join(item.strip() for item in transcripts if item.strip())
+            result = self._process_text("dictation", transcript, settings)
+            if not result:
+                raise RuntimeError("Nie udało się rozpoznać tekstu z wybranego pliku.")
+            self._last_result = result
+            wx.CallAfter(self._save_description_as, "transcription", result)
+        except Exception as e:
+            self._write_log("Transkrypcja pliku: {}".format(e))
+            wx.CallAfter(self._file_action_failed, "Nie udało się rozpoznać nagrania: {}".format(str(e)[:180]))
+
+    def _synthesize_file_worker(self, file_path, settings):
+        try:
+            if os.path.getsize(file_path) > 5 * 1024 * 1024:
+                raise RuntimeError("Plik tekstowy jest większy niż 5 MB.")
+            raw = Path(file_path).read_bytes()
+            text = None
+            for encoding in ("utf-8-sig", "utf-16", "cp1250"):
+                try:
+                    text = raw.decode(encoding)
+                    break
+                except UnicodeError:
+                    continue
+            if text is None:
+                raise RuntimeError("Nie można odczytać kodowania pliku. Zapisz go jako TXT UTF-8.")
+            text = text.strip()
+            if not text:
+                raise RuntimeError("Wybrany plik tekstowy jest pusty.")
+            wav_data = self._create_speech_wav(text, settings)
+            wx.CallAfter(self._save_audio_as, wav_data)
+        except Exception as e:
+            self._write_log("Synteza z pliku tekstowego: {}".format(e))
+            wx.CallAfter(self._file_action_failed, "Nie udało się przygotować mowy: {}".format(str(e)[:180]))
+
+    def _file_action_failed(self, message):
+        self._processing = False
+        ui.message(message)
+
+    @staticmethod
+    def _split_tts_text(text, max_chars=3500):
+        remaining = str(text).strip()
+        while remaining:
+            if len(remaining) <= max_chars:
+                yield remaining
+                break
+            cut = max(remaining.rfind(mark, 0, max_chars) for mark in (". ", "! ", "? ", "\n", " "))
+            if cut < max_chars // 3:
+                cut = max_chars
+            else:
+                cut += 1
+            part, remaining = remaining[:cut].strip(), remaining[cut:].strip()
+            if part:
+                yield part
+
+    def _create_speech_wav(self, text, settings):
+        provider = settings.get("provider", "gemini")
+        temp_root = tempfile.mkdtemp(prefix="polskieDyktowanie_tts_")
+        try:
+            wav_parts = []
+            for index, part in enumerate(self._split_tts_text(text), 1):
+                wx.CallAfter(ui.message, "Tworzę część mowy {}.".format(index))
+                if provider == "grok":
+                    audio, mime = _xai_tts(settings.get("xai_key", ""), settings.get("xai_tts_voice"), part)
+                elif provider == "openai":
+                    audio, mime = _openai_tts(settings.get("openai_key", ""), settings.get("openai_tts_model"), settings.get("openai_tts_voice"), part)
+                else:
+                    audio, mime = _gemini_tts(settings.get("gemini_key", ""), settings.get("gemini_tts_model"), settings.get("gemini_tts_voice"), part)
+                source_suffix = ".wav" if "wav" in str(mime).lower() else ".mp3"
+                source_path = os.path.join(temp_root, "source_{:03d}{}".format(index, source_suffix))
+                if source_suffix == ".wav" and not audio.startswith(b"RIFF"):
+                    audio = self._wrap_raw_pcm_as_wav(audio)
+                with open(source_path, "wb") as audio_file:
+                    audio_file.write(audio)
+                normalized_path = os.path.join(temp_root, "part_{:03d}.wav".format(index))
+                ffmpeg, _ffprobe = _find_ffmpeg_tools()
+                try:
+                    subprocess.run(
+                        [ffmpeg, "-nostdin", "-hide_banner", "-loglevel", "error", "-y", "-i", source_path,
+                         "-ac", "1", "-ar", "24000", "-c:a", "pcm_s16le", normalized_path],
+                        stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=120, check=True,
+                    )
+                except subprocess.CalledProcessError as e:
+                    detail = e.stderr.decode("utf-8", "replace")[-250:].strip() if e.stderr else ""
+                    raise RuntimeError("Nie można przygotować dźwięku WAV. {}".format(detail))
+                wav_parts.append(normalized_path)
+            if not wav_parts:
+                raise RuntimeError("Nie otrzymano dźwięku z silnika syntezy.")
+            combined_path = os.path.join(temp_root, "speech.wav")
+            with wave.open(combined_path, "wb") as combined:
+                combined.setnchannels(1)
+                combined.setsampwidth(2)
+                combined.setframerate(24000)
+                for wav_path in wav_parts:
+                    with wave.open(wav_path, "rb") as part_file:
+                        combined.writeframes(part_file.readframes(part_file.getnframes()))
+            return Path(combined_path).read_bytes()
+        finally:
+            shutil.rmtree(temp_root, ignore_errors=True)
+
+    @staticmethod
+    def _wrap_raw_pcm_as_wav(audio):
+        return b"RIFF" + struct.pack("<I", 36 + len(audio)) + b"WAVEfmt " + struct.pack("<IHHIIHH", 16, 1, 1, 24000, 48000, 2, 16) + b"data" + struct.pack("<I", len(audio)) + audio
+
+    def _save_audio_as(self, audio):
+        dialog = None
+        popup_started = False
+        try:
+            gui.mainFrame.prePopup()
+            popup_started = True
+            documents = wx.StandardPaths.Get().GetDocumentsDir()
+            if not documents or not os.path.isdir(documents):
+                documents = os.path.expanduser("~")
+            dialog = wx.FileDialog(
+                gui.mainFrame, message="Zapisz mowę jako plik WAV", defaultDir=documents,
+                defaultFile="Synteza mowy.wav", wildcard="Plik audio WAV (*.wav)|*.wav",
+                style=wx.FD_SAVE | wx.FD_OVERWRITE_PROMPT,
+            )
+            if dialog.ShowModal() != wx.ID_OK:
+                ui.message("Anulowano zapisywanie nagrania.")
+                return
+            path = dialog.GetPath()
+            if not path.lower().endswith(".wav"):
+                path += ".wav"
+            with open(path, "wb") as output:
+                output.write(audio)
+            ui.message("Nagranie zapisano jako plik WAV.")
+        except Exception as e:
+            self._write_log("Zapisywanie syntezy WAV: {}".format(e))
+            ui.message("Nie udało się zapisać nagrania: {}".format(str(e)[:150]))
+        finally:
+            if dialog:
+                dialog.Destroy()
+            if popup_started:
+                gui.mainFrame.postPopup()
+            self._processing = False
+
     def _run_selected_mode(self):
         if self._recording or self._processing:
             ui.message("Dodatek już przetwarza zadanie.")
@@ -2037,17 +2324,8 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
             wx.CallAfter(self._show_settings)
             return
         if mode in ("photo_file", "video_file"):
-            file_path = str(settings.get("media_attachment_path", "") or "").strip()
-            extension = os.path.splitext(file_path)[1].lower()
-            allowed = (
-                (".png", ".jpg", ".jpeg", ".webp") if mode == "photo_file"
-                else (".mp4", ".mov", ".mkv", ".avi", ".webm", ".m4v", ".wmv")
-            )
-            if file_path and os.path.isfile(file_path) and extension in allowed:
-                self._start_visual_analysis(mode, settings, file_path)
-                return
             self._processing = True
-            ui.message("Otwieram wybór załącznika.")
+            ui.message("Wybierz plik do opisu.")
             wx.CallAfter(self._choose_visual_attachment, mode, settings)
             return
         self._start_visual_analysis(mode, settings)
@@ -2084,8 +2362,7 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
         if not file_path:
             self._processing = False
             return
-        self._save_settings({"media_attachment_path": file_path, "visual_mode": mode})
-        settings.update({"media_attachment_path": file_path, "visual_mode": mode})
+        settings["visual_mode"] = mode
         self._start_visual_analysis(mode, settings, file_path)
 
     def _start_visual_analysis(self, mode, settings, file_path=None):
@@ -2120,6 +2397,8 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
         text = str(text or "").strip()
         if not text:
             ui.message("Dostawca AI nie zwrócił opisu.")
+            if mode == "transcription":
+                self._processing = False
             return
         titles = {
             "photo_file": ("Opis obrazu z pliku", "Opis obrazu z pliku.txt"),
@@ -2128,6 +2407,7 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
             "colors": ("Rozpoznane kolory", "Rozpoznane kolory.txt"),
             "video_file": ("Opis wideo z pliku", "Opis wideo z pliku.txt"),
             "video": ("Opis wideo z ekranu", "Opis wideo z ekranu.txt"),
+            "transcription": ("Transkrypcja nagrania", "Transkrypcja nagrania.txt"),
         }
         title, default_file = titles.get(mode, ("Opis", "Opis.txt"))
         dialog = None
@@ -2140,7 +2420,7 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
                 documents = os.path.expanduser("~")
             dialog = wx.FileDialog(
                 gui.mainFrame,
-                message="Zapisz opis jako",
+                message="Zapisz transkrypcję jako" if mode == "transcription" else "Zapisz opis jako",
                 defaultDir=documents,
                 defaultFile=default_file,
                 wildcard="Plik tekstowy (*.txt)|*.txt",
@@ -2157,7 +2437,7 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
                 output.write(title + "\r\n\r\n")
                 output.write(normalized.replace("\n", "\r\n"))
                 output.write("\r\n")
-            ui.message("Opis zapisano w pliku tekstowym.")
+            ui.message("Transkrypcję zapisano w pliku tekstowym." if mode == "transcription" else "Opis zapisano w pliku tekstowym.")
         except Exception as e:
             self._write_log("Zapisywanie opisu: {}".format(e))
             ui.message("Nie udało się zapisać opisu: {}".format(str(e)[:150]))
@@ -2166,6 +2446,8 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
                 dialog.Destroy()
             if popup_started:
                 gui.mainFrame.postPopup()
+            if mode == "transcription":
+                self._processing = False
 
     def _copy_last_result(self):
         if self._last_result:
@@ -2343,6 +2625,39 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
                 ui.message("Wybierz tryb tekstowy w ustawieniach. Skrót z Shift uruchamia analizę obrazu lub wideo.")
         else:
             wx.CallAfter(self._show_settings)
+
+    @script(description="Rozpocznij lub zakończ bezpośrednie dyktowanie mowy na tekst.")
+    def script_runSpeechToText(self, gesture):
+        if self._recording:
+            if self._stop_event:
+                self._stop_event.set()
+                self._play_cue(500, 120)
+                ui.message("Kończę nagranie.")
+            return
+        if self._processing:
+            ui.message("Dodatek jest jeszcze zajęty.")
+            return
+        focus = api.getFocusObject()
+        if not _is_editable(focus):
+            ui.message("Aby dyktować, ustaw fokus w polu edycji.")
+            return
+        self._start(focus, "dictation")
+
+    @script(description="Odczytaj zaznaczony lub dostępny tekst za pomocą syntezy mowy.")
+    def script_runTextToSpeech(self, gesture):
+        if self._recording or self._processing:
+            ui.message("Dodatek jest jeszcze zajęty.")
+            return
+        focus = api.getFocusObject()
+        self._speak_focus(focus, dict(self._settings))
+
+    @script(description="Wybierz plik audio lub wideo i zapisz jego transkrypcję jako tekst.")
+    def script_runFileTranscription(self, gesture):
+        self._run_file_action("transcribe", dict(self._settings))
+
+    @script(description="Wybierz plik tekstowy i zapisz syntezę mowy jako plik WAV.")
+    def script_runFileSynthesis(self, gesture):
+        self._run_file_action("synthesize_file", dict(self._settings))
 
     @script(description="Uruchom wybraną analizę obrazu, kolorów lub wideo niezależnie od fokusu.")
     def script_runVisualMode(self, gesture):
