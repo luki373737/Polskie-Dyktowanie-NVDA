@@ -1,0 +1,21 @@
+DOŁĄCZONE NARZĘDZIA FFmpeg — INFORMACJE
+
+Dodatek zawiera programy ffmpeg.exe i ffprobe.exe z pakietu Windows x86_64
+„ffmpeg-n9.0-latest-win64-lgpl-9.0.zip”, opublikowanego przez BtbN/FFmpeg-Builds
+6 listopada 2026 r. Jest to wariant LGPL, bez oznaczenia GPL.
+
+Projekt FFmpeg: https://ffmpeg.org/
+Strona licencyjna FFmpeg: https://ffmpeg.org/legal.html
+Źródło pakietu Windows: https://github.com/BtbN/FFmpeg-Builds/releases
+Plik źródłowy FFmpeg dołączono do archiwum źródeł dodatku:
+thirdParty/ffmpeg/FFmpeg-source-d32b387f.tar.gz
+Repozytorium źródeł: https://github.com/FFmpeg/FFmpeg
+Źródłowy commit FFmpeg: d32b387f2b0a484599d4587d651891f0c63c4238
+Licencję dostarczoną wraz z buildem zawiera plik THIRD_PARTY_FFMPEG_LICENSE.txt.
+
+SHA-256 dołączonych plików:
+ffmpeg.exe   b0429a63ce777566bd65e8b267813a547e8df9df3a4865d769460f2e0fbab535
+ffprobe.exe  3ead846c305cc7e3e27f9f061a96df567a7b2c59ab85cd37e61c164541dcd9ec
+
+FFmpeg jest osobnym programem wywoływanym przez dodatek do pobrania klatek filmu.
+Nie jest częścią kodu Polskiego Dyktowania.
