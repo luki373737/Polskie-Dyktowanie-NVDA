@@ -1013,6 +1013,58 @@ def _capture_desktop_png(region=None):
         gdi32.DeleteDC(memory)
 
 
+class _SupportDialog(wx.Dialog):
+    """Accessible support page shown only before an intentional settings open."""
+
+    PAYPAL_URL = "https://www.paypal.me/luki373737"
+    REVOLUT_URL = "https://revolut.me/ukaszecx7"
+
+    def __init__(self, parent):
+        super().__init__(
+            parent,
+            title="Wesprzyj Polskie Dyktowanie",
+            style=wx.DEFAULT_DIALOG_STYLE | wx.STAY_ON_TOP,
+        )
+        panel = wx.Panel(self)
+        layout = wx.BoxSizer(wx.VERTICAL)
+        message = wx.StaticText(
+            panel,
+            label=(
+                "Jeśli Polskie Dyktowanie jest dla Ciebie przydatne, możesz "
+                "wesprzeć jego dalszy rozwój. Dziękuję za każdą pomoc."
+            ),
+        )
+        message.Wrap(430)
+        layout.Add(message, 0, wx.ALL | wx.EXPAND, 14)
+
+        buttons = wx.BoxSizer(wx.HORIZONTAL)
+        paypal = wx.Button(panel, label="Wesprzyj przez PayPal")
+        revolut = wx.Button(panel, label="Wesprzyj przez Revolut")
+        buttons.Add(paypal, 0, wx.RIGHT, 8)
+        buttons.Add(revolut, 0)
+        layout.Add(buttons, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 14)
+
+        close_button = wx.Button(panel, wx.ID_OK, "Zamknij — przejdź do ustawień")
+        layout.Add(close_button, 0, wx.ALIGN_RIGHT | wx.LEFT | wx.RIGHT | wx.BOTTOM, 14)
+        panel.SetSizer(layout)
+        self.SetDefaultItem(close_button)
+        close_button.SetFocus()
+        paypal.Bind(wx.EVT_BUTTON, lambda event: self._open_donation(self.PAYPAL_URL))
+        revolut.Bind(wx.EVT_BUTTON, lambda event: self._open_donation(self.REVOLUT_URL))
+        close_button.Bind(wx.EVT_BUTTON, lambda event: self.EndModal(wx.ID_OK))
+        self.Bind(wx.EVT_CLOSE, lambda event: self.EndModal(wx.ID_CANCEL))
+        self.SetEscapeId(wx.ID_CANCEL)
+        self.Fit()
+        self.CentreOnParent()
+
+    @staticmethod
+    def _open_donation(url):
+        try:
+            webbrowser.open(url)
+        except Exception:
+            ui.message("Nie udało się otworzyć strony płatności.")
+
+
 class _SettingsDialog(wx.Dialog):
     MASKED_KEY = "************"
     PROVIDERS = ["Gemini / Google", "Grok / xAI", "OpenAI API"]
@@ -1837,7 +1889,7 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
         except Exception:
             pass
 
-    def _show_settings(self):
+    def _show_settings(self, show_support=False):
         if self._settings_dialog:
             try:
                 self._bring_settings_to_front(self._settings_dialog)
@@ -1851,6 +1903,12 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
             # NVDA requires popup lifecycle hooks around modal add-on dialogs.
             gui.mainFrame.prePopup()
             popup_started = True
+            if show_support:
+                support_dialog = _SupportDialog(gui.mainFrame)
+                try:
+                    support_dialog.ShowModal()
+                finally:
+                    support_dialog.Destroy()
             dialog = _SettingsDialog(gui.mainFrame, self._settings, self._save_settings, self._test_api, self._fetch_models, self._run_selected_mode, self._copy_last_result, self._read_last_result, self._clear_log, self._run_file_action)
             self._settings_dialog = dialog
             # Activate after ShowModal has displayed the native window.
@@ -2624,7 +2682,7 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
             else:
                 ui.message("Wybierz tryb tekstowy w ustawieniach. Skrót z Shift uruchamia analizę obrazu lub wideo.")
         else:
-            wx.CallAfter(self._show_settings)
+            wx.CallAfter(self._show_settings, True)
 
     @script(description="Rozpocznij lub zakończ bezpośrednie dyktowanie mowy na tekst.")
     def script_runSpeechToText(self, gesture):
